@@ -1,10 +1,11 @@
-﻿using System;
+﻿using Microsoft.Data.Sqlite;
+using SSD_Assignment___Banking_Application;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Microsoft.Data.Sqlite;
 
 namespace Banking_Application
 {
@@ -15,7 +16,7 @@ namespace Banking_Application
         public static String databaseName = "Banking Database.db";
         private static Data_Access_Layer instance = new Data_Access_Layer();
 
-        private Data_Access_Layer()//Singleton Design Pattern (For Concurrency Control) - Use getInstance() Method Instead.
+        private Data_Access_Layer()
         {
             accounts = new List<Bank_Account>();
         }
@@ -61,7 +62,7 @@ namespace Banking_Application
                 ";
 
                 command.ExecuteNonQuery();
-                
+
             }
         }
 
@@ -78,21 +79,27 @@ namespace Banking_Application
                     var command = connection.CreateCommand();
                     command.CommandText = "SELECT * FROM Bank_Accounts";
                     SqliteDataReader dr = command.ExecuteReader();
-                    
-                    while(dr.Read())
+
+                    while (dr.Read())
                     {
 
                         int accountType = dr.GetInt16(7);
 
-                        if(accountType == Account_Type.Current_Account)
+                        string name = SecurityHelper.Decrypt(dr.GetString(1));
+                        string addr1 = SecurityHelper.Decrypt(dr.GetString(2));
+                        string addr2 = SecurityHelper.Decrypt(dr.GetString(3));
+                        string addr3 = SecurityHelper.Decrypt(dr.GetString(4));
+                        string town = SecurityHelper.Decrypt(dr.GetString(5));
+
+                        if (accountType == Account_Type.Current_Account)
                         {
                             Current_Account ca = new Current_Account();
                             ca.accountNo = dr.GetString(0);
-                            ca.name = dr.GetString(1);
-                            ca.address_line_1 = dr.GetString(2);
-                            ca.address_line_2 = dr.GetString(3);
-                            ca.address_line_3 = dr.GetString(4);
-                            ca.town = dr.GetString(5);
+                            ca.name = name;
+                            ca.address_line_1 = addr1;
+                            ca.address_line_2 = addr2;
+                            ca.address_line_3 = addr3;
+                            ca.town = town;
                             ca.balance = dr.GetDouble(6);
                             ca.overdraftAmount = dr.GetDouble(8);
                             accounts.Add(ca);
@@ -119,9 +126,8 @@ namespace Banking_Application
             }
         }
 
-        public String addBankAccount(Bank_Account ba) 
+        public String addBankAccount(Bank_Account ba)
         {
-
             if (ba.GetType() == typeof(Current_Account))
                 ba = (Current_Account)ba;
             else
@@ -133,42 +139,44 @@ namespace Banking_Application
             {
                 connection.Open();
                 var command = connection.CreateCommand();
-                command.CommandText =
-                @"
-                    INSERT INTO Bank_Accounts VALUES(" +
-                    "'" + ba.accountNo + "', " +
-                    "'" + ba.name + "', " +
-                    "'" + ba.address_line_1 + "', " +
-                    "'" + ba.address_line_2 + "', " +
-                    "'" + ba.address_line_3 + "', " +
-                    "'" + ba.town + "', " +
-                    ba.balance + ", " +
-                    (ba.GetType() == typeof(Current_Account) ? 1 : 2) + ", ";
+
+                command.CommandText = @"INSERT INTO Bank_Accounts (accountNo, name, address_line_1,
+                address_line_2, address_line_3, town, balance, accountType, overdraftAmount, interestRate)
+                VALUES ($accNo, $name, $addr1, $addr2, $addr3, $town, $balance, $type, $overdraft, $interest)";
+
+                command.Parameters.AddWithValue("$accNo", ba.accountNo);
+                command.Parameters.AddWithValue("$name", SecurityHelper.Encrypt(ba.name));
+                command.Parameters.AddWithValue("$addr1", SecurityHelper.Encrypt(ba.address_line_1));
+                command.Parameters.AddWithValue("$addr2", SecurityHelper.Encrypt(ba.address_line_2));
+                command.Parameters.AddWithValue("$addr3", SecurityHelper.Encrypt(ba.address_line_3));
+                command.Parameters.AddWithValue("$town", SecurityHelper.Encrypt(ba.town));
+                command.Parameters.AddWithValue("$balance", ba.balance);
+
+                int typeVal = (ba.GetType() == typeof(Current_Account) ? 1 : 2);
+                command.Parameters.AddWithValue("$type", typeVal);
 
                 if (ba.GetType() == typeof(Current_Account))
                 {
                     Current_Account ca = (Current_Account)ba;
-                    command.CommandText += ca.overdraftAmount + ", NULL)";
+                    command.Parameters.AddWithValue("$overdraft", ca.overdraftAmount);
+                    command.Parameters.AddWithValue("$interest", DBNull.Value);
                 }
-
                 else
                 {
                     Savings_Account sa = (Savings_Account)ba;
-                    command.CommandText += "NULL," + sa.interestRate + ")";
+                    command.Parameters.AddWithValue("$overdraft", DBNull.Value);
+                    command.Parameters.AddWithValue("$interest", sa.interestRate);
                 }
 
                 command.ExecuteNonQuery();
-
             }
-
             return ba.accountNo;
-
         }
 
-        public Bank_Account findBankAccountByAccNo(String accNo) 
-        { 
-        
-            foreach(Bank_Account ba in accounts)
+        public Bank_Account findBankAccountByAccNo(String accNo)
+        {
+
+            foreach (Bank_Account ba in accounts)
             {
 
                 if (ba.accountNo.Equals(accNo))
@@ -178,14 +186,14 @@ namespace Banking_Application
 
             }
 
-            return null; 
+            return null;
         }
 
-        public bool closeBankAccount(String accNo) 
+        public bool closeBankAccount(String accNo)
         {
 
             Bank_Account toRemove = null;
-            
+
             foreach (Bank_Account ba in accounts)
             {
 
@@ -243,8 +251,9 @@ namespace Banking_Application
                 {
                     connection.Open();
                     var command = connection.CreateCommand();
-                    command.CommandText = "UPDATE Bank_Accounts SET balance = " + toLodgeTo.balance + " WHERE accountNo = '" + toLodgeTo.accountNo + "'";
-                    command.ExecuteNonQuery();
+                    command.CommandText = "UPDATE Bank_Accounts SET balance = $bal WHERE accountNo = $acc";
+                    command.Parameters.AddWithValue("$bal", toLodgeTo.balance);
+                    command.Parameters.AddWithValue("$acc", toLodgeTo.accountNo);
 
                 }
 
@@ -280,8 +289,9 @@ namespace Banking_Application
                 {
                     connection.Open();
                     var command = connection.CreateCommand();
-                    command.CommandText = "UPDATE Bank_Accounts SET balance = " + toWithdrawFrom.balance + " WHERE accountNo = '" + toWithdrawFrom.accountNo + "'";
-                    command.ExecuteNonQuery();
+                    command.CommandText = "UPDATE Bank_Accounts SET balance = $bal WHERE accountNo = $acc";
+                    command.Parameters.AddWithValue("$bal", toWithdrawFrom.balance);
+                    command.Parameters.AddWithValue("$acc", toWithdrawFrom.accountNo);
 
                 }
 
